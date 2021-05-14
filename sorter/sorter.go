@@ -30,12 +30,9 @@ func GetNewBatch() []collector.Log {
 		}
 	}
 
-
-
 	sort.SliceStable(logs, func(i, j int) bool {
 		return logs[i].Timestamp < logs[j].Timestamp
 	})
-
 
 	return logs
 }

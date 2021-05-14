@@ -3,58 +3,70 @@ package collector
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+	"io"
 	"strings"
 	"time"
 	"unicode"
 )
 
-func CollectLogs(containerId string) []Log {
+func New(ID string, name string) *Instance {
+	return &Instance{
+		ID:   ID,
+		Name: name,
+	}
+}
+
+func (i *Instance) CollectLogs() []Log {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		panic(err)
 	}
 
-	options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true}
-	out, err := cli.ContainerLogs(ctx, containerId, options)
+	options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true, Since: fmt.Sprintf("%d", i.LastTimestamp+1)}
+	out, err := cli.ContainerLogs(ctx, i.ID, options)
 	if err != nil {
 		panic(err)
 	}
 
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(out)
-	str := buf.String()
-
-	var splitLogs []string
-
-	splitLogs = strings.Split(str, "\n")
+	str := apiResponseToString(out)
 
 	var logs []Log
-	parseLogs(splitLogs, &logs)
+	parseLogs(str, i.Name, &logs)
 
+	i.LastTimestamp = logs[len(logs) - 1].Timestamp
 	return logs
 }
 
-func parseLogs(logs []string, dest *[]Log) {
-	for _, log := range logs {
-		lg := parseLogString(log)
-		*dest = append(*dest, lg)
-	}
+func apiResponseToString(out io.ReadCloser) string {
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(out)
+
+	return buf.String()
 }
 
-func parseLogString(log string) Log {
-	split := strings.SplitN(log, " ", 2)
+func parseLogs(logStr, containerName string, dest *[]Log) {
+	var logs []string
 
-	if len(split) != 1 && validateLogMessage(split[0]) {
-		return Log{
-			Timestamp:  timestampToUnix(split[0]),
-			LogMessage: split[1],
+	logs = strings.Split(logStr, "\n")
+
+	var lg Log
+	for _, log := range logs {
+		split := strings.SplitN(log, " ", 2)
+
+		if len(split) != 1 && validateLogMessage(split[0]) {
+			lg = Log{
+				Timestamp:  timestampToUnix(split[0]),
+				LogMessage: split[1],
+				Instance: containerName,
+			}
+
+			*dest = append(*dest, lg)
 		}
 	}
-
-	return Log{}
 }
 
 func validateLogMessage(log string) bool {
@@ -63,6 +75,7 @@ func validateLogMessage(log string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
